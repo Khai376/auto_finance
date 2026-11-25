@@ -60,9 +60,9 @@ onMounted(load);
         <div>
           <h2>{{ contract.car_name }}</h2>
           <p>สัญญา {{ contract.contract_no }}</p>
-          <em>{{
+          <!-- <em>{{
             role === "owner" ? "คนที่ 2 · เจ้าของ" : "คนที่ 1 · ผู้ผ่อน"
-          }}</em>
+          }}</em> -->
         </div>
       </section>
       <section class="card">
@@ -89,7 +89,7 @@ onMounted(load);
         <span>ยอดเงินเรียกเก็บคงเหลือ</span>
         <h2>{{ money(remainingTotal) }} บาท</h2>
       </section>
-      <section class="card"  v-if="role === 'owner'">
+      <section class="card" v-if="role === 'owner'">
         <h3>ยอดรับผิดชอบรวม</h3>
         <div class="responsibility">
           <div>
@@ -105,22 +105,18 @@ onMounted(load);
           <div class="installment-box">
             <small>งวดที่</small><b>{{ next.installment_no }}</b>
           </div>
-          <div>
-            <span>ยอดงวดรวม</span>
-            <h2>{{ money(next.amount) }} บาท</h2>
+          <div v-if="role != 'owner'">
+            <span >ยอดงวดรวม</span>
+            <h2>{{ money(next.payer1_amount) }}  บาท</h2>
+            <p>กำหนด {{ next.due_date || "-" }}</p>
+          </div>
+          <div v-if="role == 'owner'">
+            <span >ยอดงวดรวม</span>
+           <h2>{{ money(next.payer2_amount) }}  บาท</h2>
             <p>กำหนด {{ next.due_date || "-" }}</p>
           </div>
         </div>
-        <div class="responsibility">
-          <div>
-            <span>คนที่ 1 · คอลัมน์ D</span
-            ><b>{{ money(next.payer1_amount) }} บาท</b>
-          </div>
-          <div class="orange-soft">
-            <span>คนที่ 2 · คอลัมน์ E</span
-            ><b>{{ money(next.payer2_amount) }} บาท</b>
-          </div>
-        </div>
+       
         <RouterLink class="btn pay full" :to="'/payment/' + next.id"
           >บันทึกชำระ / แนบสลิป</RouterLink
         ><RouterLink
