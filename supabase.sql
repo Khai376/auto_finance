@@ -1,0 +1,13 @@
+create extension if not exists pgcrypto;
+create table if not exists public.payments(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users(id) on delete cascade,contract_no text not null,installment_no int not null check(installment_no between 22 and 77),paid_date date not null,amount numeric(12,2) not null check(amount>0),payer text,note text,slip_path text not null,created_at timestamptz not null default now(),unique(user_id,contract_no,installment_no));
+create table if not exists public.car_documents(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users(id) on delete cascade,contract_no text not null,name text not null,type text not null,expiry_date date,file_path text not null,created_at timestamptz not null default now());
+alter table public.payments enable row level security; alter table public.car_documents enable row level security;
+create policy "own payments select" on public.payments for select to authenticated using ((select auth.uid())=user_id);
+create policy "own payments insert" on public.payments for insert to authenticated with check ((select auth.uid())=user_id);
+create policy "own documents select" on public.car_documents for select to authenticated using ((select auth.uid())=user_id);
+create policy "own documents insert" on public.car_documents for insert to authenticated with check ((select auth.uid())=user_id);
+insert into storage.buckets(id,name,public) values ('payment-slips','payment-slips',false),('car-documents','car-documents',false) on conflict(id) do nothing;
+create policy "own slip upload" on storage.objects for insert to authenticated with check(bucket_id='payment-slips' and (storage.foldername(name))[1]=(select auth.uid())::text);
+create policy "own slip read" on storage.objects for select to authenticated using(bucket_id='payment-slips' and (storage.foldername(name))[1]=(select auth.uid())::text);
+create policy "own doc upload" on storage.objects for insert to authenticated with check(bucket_id='car-documents' and (storage.foldername(name))[1]=(select auth.uid())::text);
+create policy "own doc read" on storage.objects for select to authenticated using(bucket_id='car-documents' and (storage.foldername(name))[1]=(select auth.uid())::text);
