@@ -30,3 +30,4 @@ npm run deploy
 ## Deploy Vercel
 นำ repository เข้า Vercel แล้วใช้ Build Command `npm run build` และ Output Directory `dist`
 # auto_finance
+# auto_finance
