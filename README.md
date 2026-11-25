@@ -1,10 +1,8 @@
-# Car Payment System + Supabase Auth
+# Car Payment System Final
+1. ใน Supabase Authentication ต้องมี `ciradech16@gmail.com` และ `phikunthong.t@kkumail.com`
+2. สำรอง DB แล้วรัน `supabase_final.sql` ทั้งไฟล์ใน SQL Editor
+3. คัดลอก `.env.example` เป็น `.env` และใส่ URL/Anon key ของโปรเจกต์เดียวกัน
+4. รัน `npm install` แล้ว `npm run dev`
+5. เปิด URL ที่ Vite แสดง เช่น `http://localhost:5173/#/login`
 
-1. Create a Supabase project.
-2. SQL Editor: run `supabase.sql`.
-3. Authentication > Users: create the email/password user (or enable public signup if desired).
-4. Copy `.env.example` to `.env` and fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-5. `npm install && npm run dev`
-6. Before GitHub Pages deployment, set the repository base in vite.config.js, then `GITHUB_PAGES=true npm run build && npm run deploy`.
-
-Security: Storage buckets are private and access is scoped by auth.uid(). Do not put service_role keys in the frontend.
+ผลตรวจ SQL ท้ายไฟล์ต้องเป็น remaining_rows=56 และ remaining_total=263749.00
