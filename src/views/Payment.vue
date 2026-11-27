@@ -20,135 +20,63 @@ const {
   load: loadContract,
 } = useContract();
 
-/*
-|--------------------------------------------------------------------------
-| CONFIG
-|--------------------------------------------------------------------------
-|
-| ถ้าชื่อ Storage Bucket เดิมของคุณไม่ใช่ installment-slips
-| ให้เปลี่ยนเฉพาะบรรทัดนี้
-|
-*/
+// Supabase Storage bucket. Database table remains installment_slips.
 const SLIP_BUCKET = "payment-slips";
-
-/*
-|--------------------------------------------------------------------------
-| STATE
-|--------------------------------------------------------------------------
-*/
 
 const loading = ref(true);
 const submitting = ref(false);
-
 const errorMessage = ref("");
 const successMessage = ref("");
-
 const installment = ref(null);
 const existingSlip = ref(null);
-
 const selectedFile = ref(null);
 const previewUrl = ref("");
 const existingSlipUrl = ref("");
-
 const note = ref("");
-
 const fileInput = ref(null);
 
-/*
-|--------------------------------------------------------------------------
-| COMPUTED
-|--------------------------------------------------------------------------
-*/
-
-const installmentId = computed(() => {
-  return String(route.params.id || "").trim();
-});
-
-/*
- * ยอดจริงที่ใช้ตอนนี้ = ยอดเต็มของงวด
- *
- * ไม่ใช้ payer1_amount
- * ไม่ใช้ payer2_amount
- */
-const paymentAmount = computed(() => {
-  return Number(installment.value?.amount || 0);
-});
-
-const hasSlip = computed(() => {
-  return Boolean(existingSlip.value?.id);
-});
-
-const isOwner = computed(() => {
-  return role.value === "owner";
-});
-
-const canSubmit = computed(() => {
-  return (
+const installmentId = computed(() => String(route.params.id || "").trim());
+const paymentAmount = computed(() => Number(installment.value?.amount || 0));
+const hasSlip = computed(() => Boolean(existingSlip.value?.id));
+const isOwner = computed(() => role.value === "owner");
+const canSubmit = computed(
+  () =>
     Boolean(installment.value?.id) &&
     Boolean(selectedFile.value) &&
     !hasSlip.value &&
-    !submitting.value
-  );
-});
-
-const statusText = computed(() => {
-  const status = installment.value?.status;
-
-  return (
-    {
+    !submitting.value,
+);
+const statusText = computed(
+  () =>
+    ({
       pending: "รอชำระ",
       partial: "ชำระบางส่วน",
       submitted: "รอตรวจสอบ",
       paid: "ชำระแล้ว",
       rejected: "ไม่อนุมัติ",
-    }[status] ||
-    status ||
-    "-"
-  );
-});
+    })[installment.value?.status] ||
+    installment.value?.status ||
+    "-",
+);
 
-/*
-|--------------------------------------------------------------------------
-| HELPERS
-|--------------------------------------------------------------------------
-*/
-
-const money = (value) => {
-  return new Intl.NumberFormat("th-TH", {
+const money = (value) =>
+  new Intl.NumberFormat("th-TH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
-};
 
 const formatFileSize = (bytes) => {
   const size = Number(bytes || 0);
-
-  if (!size) {
-    return "-";
-  }
-
-  if (size < 1024) {
-    return `${size} B`;
-  }
-
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-
+  if (!size) return "-";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const formatDateTime = (value) => {
-  if (!value) {
-    return "-";
-  }
-
+  if (!value) return "-";
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
+  if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("th-TH", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -167,710 +95,282 @@ const revokePreview = () => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| LOAD INSTALLMENT
-|--------------------------------------------------------------------------
-*/
-
 const loadInstallment = () => {
   const found = installments.value.find(
     (item) => String(item.id) === installmentId.value,
   );
-
-  if (!found) {
-    throw new Error("ไม่พบข้อมูลงวดที่ต้องการชำระ");
-  }
-
+  if (!found) throw new Error("ไม่พบข้อมูลงวดที่ต้องการชำระ");
   installment.value = found;
 };
-
-/*
-|--------------------------------------------------------------------------
-| LOAD EXISTING SLIP
-|--------------------------------------------------------------------------
-|
-| DB มี unique index:
-|
-| installment_slips_one_per_installment_uidx
-|
-| ดังนั้น 1 งวดจะมีได้สูงสุด 1 slip
-|
-*/
-
-const loadExistingSlip = async () => {
-  existingSlip.value = null;
-  existingSlipUrl.value = "";
-
-  const { data, error } = await supabase
-    .from("installment_slips")
-    .select(
-      `
-      id,
-      installment_id,
-      uploaded_by,
-      amount,
-      storage_path,
-      file_name,
-      mime_type,
-      file_size,
-      note,
-      created_at
-    `,
-    )
-    .eq("installment_id", installmentId.value)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  existingSlip.value = data || null;
-
-  if (data?.storage_path) {
-    await createSlipUrl(data.storage_path);
-  }
-};
-
-/*
-|--------------------------------------------------------------------------
-| CREATE SIGNED URL
-|--------------------------------------------------------------------------
-*/
 
 const createSlipUrl = async (storagePath) => {
   if (!storagePath) {
     existingSlipUrl.value = "";
     return;
   }
-
   const { data, error } = await supabase.storage
     .from(SLIP_BUCKET)
     .createSignedUrl(storagePath, 60 * 60);
-
   if (error) {
     console.error("createSignedUrl:", error);
-
     existingSlipUrl.value = "";
-
     return;
   }
-
   existingSlipUrl.value = data?.signedUrl || "";
 };
 
-/*
-|--------------------------------------------------------------------------
-| LOAD PAGE
-|--------------------------------------------------------------------------
-*/
+const loadExistingSlip = async () => {
+  existingSlip.value = null;
+  existingSlipUrl.value = "";
+  const { data, error } = await supabase
+    .from("installment_slips")
+    .select(
+      "id,installment_id,uploaded_by,amount,storage_path,file_name,mime_type,file_size,note,created_at",
+    )
+    .eq("installment_id", installmentId.value)
+    .maybeSingle();
+  if (error) throw error;
+  existingSlip.value = data || null;
+  if (data?.storage_path) await createSlipUrl(data.storage_path);
+};
 
 const loadPage = async () => {
   loading.value = true;
-
   clearMessages();
-
   try {
     const ok = await loadContract();
-
-    if (!ok) {
-      throw new Error(
-        contractError.value || "ไม่สามารถโหลดข้อมูลสัญญาได้",
-      );
-    }
-
+    if (!ok)
+      throw new Error(contractError.value || "ไม่สามารถโหลดข้อมูลสัญญาได้");
     loadInstallment();
-
     await loadExistingSlip();
   } catch (error) {
     console.error("Payment.loadPage:", error);
-
-    errorMessage.value =
-      error?.message || "โหลดข้อมูลไม่สำเร็จ";
+    errorMessage.value = error?.message || "โหลดข้อมูลไม่สำเร็จ";
   } finally {
     loading.value = false;
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| FILE SELECT
-|--------------------------------------------------------------------------
-*/
-
 const handleFileChange = (event) => {
   clearMessages();
-
   revokePreview();
-
   const file = event.target.files?.[0];
-
   if (!file) {
     selectedFile.value = null;
     return;
   }
-
-  const allowedTypes = [
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-  ];
-
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
   if (!allowedTypes.includes(file.type)) {
     selectedFile.value = null;
-
     event.target.value = "";
-
-    errorMessage.value =
-      "รองรับเฉพาะไฟล์ JPG, PNG และ WEBP";
-
+    errorMessage.value = "รองรับเฉพาะไฟล์ JPG, PNG และ WEBP";
     return;
   }
-
-  const maxSize = 10 * 1024 * 1024;
-
-  if (file.size > maxSize) {
+  if (file.size > 10 * 1024 * 1024) {
     selectedFile.value = null;
-
     event.target.value = "";
-
-    errorMessage.value =
-      "ไฟล์ต้องมีขนาดไม่เกิน 10 MB";
-
+    errorMessage.value = "ไฟล์ต้องมีขนาดไม่เกิน 10 MB";
     return;
   }
-
   selectedFile.value = file;
-
   previewUrl.value = URL.createObjectURL(file);
 };
 
-/*
-|--------------------------------------------------------------------------
-| REMOVE SELECTED FILE
-|--------------------------------------------------------------------------
-*/
-
 const removeSelectedFile = () => {
   selectedFile.value = null;
-
   revokePreview();
-
-  if (fileInput.value) {
-    fileInput.value.value = "";
-  }
+  if (fileInput.value) fileInput.value.value = "";
 };
-
-/*
-|--------------------------------------------------------------------------
-| STORAGE PATH
-|--------------------------------------------------------------------------
-*/
 
 const buildStoragePath = (file) => {
-  const extension =
-    file.name.split(".").pop()?.toLowerCase() || "jpg";
+  const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
 
-  const contractNo = String(
-    contract.value?.contract_no || "contract",
-  )
-    .replace(/[^a-zA-Z0-9_-]/g, "-")
-    .replace(/-+/g, "-");
+  // Storage policy expects the first folder to be contract_id (UUID),
+  // not contract_no such as 35-6404576.
+  const contractId = String(installment.value?.contract_id || "").trim();
+  const userId = String(user.value?.id || "").trim();
 
-  const userId = user.value?.id || "user";
+  if (!contractId) {
+    throw new Error("ไม่พบ Contract ID");
+  }
 
-  return `${contractNo}/${installmentId.value}/${userId}_${Date.now()}.${extension}`;
+  if (!userId) {
+    throw new Error("ไม่พบ User ID");
+  }
+
+  return `${contractId}/${installmentId.value}/${userId}_${Date.now()}.${extension}`;
 };
-
-/*
-|--------------------------------------------------------------------------
-| REMOVE STORAGE FILE
-|--------------------------------------------------------------------------
-*/
 
 const removeStorageFile = async (path) => {
-  if (!path) {
-    return;
-  }
-
-  const { error } = await supabase.storage
-    .from(SLIP_BUCKET)
-    .remove([path]);
-
-  if (error) {
-    console.error("removeStorageFile:", error);
-  }
+  if (!path) return;
+  const { error } = await supabase.storage.from(SLIP_BUCKET).remove([path]);
+  if (error) console.error("removeStorageFile:", error);
 };
 
-/*
-|--------------------------------------------------------------------------
-| SUBMIT
-|--------------------------------------------------------------------------
-*/
-
 const submitPayment = async () => {
-  if (submitting.value) {
-    return;
-  }
-
+  if (submitting.value) return;
   clearMessages();
-
   if (hasSlip.value) {
-    errorMessage.value =
-      "งวดนี้มีการแนบสลิปเรียบร้อยแล้ว";
-
+    errorMessage.value = "งวดนี้มีการแนบสลิปเรียบร้อยแล้ว";
     return;
   }
-
   if (!selectedFile.value) {
-    errorMessage.value =
-      "กรุณาเลือกภาพสลิปก่อนบันทึก";
-
+    errorMessage.value = "กรุณาเลือกภาพสลิปก่อนบันทึก";
     return;
   }
-
   if (!installment.value?.id) {
-    errorMessage.value =
-      "ไม่พบข้อมูลงวดที่ต้องการชำระ";
-
+    errorMessage.value = "ไม่พบข้อมูลงวดที่ต้องการชำระ";
     return;
   }
 
   submitting.value = true;
-
   let uploadedPath = "";
 
   try {
-    /*
-    |--------------------------------------------------------------------------
-    | CHECK AGAIN
-    |--------------------------------------------------------------------------
-    |
-    | เช็กอีกครั้งก่อน Upload
-    | ป้องกันคนที่ 1 และคนที่ 2 เปิดหน้าไว้พร้อมกัน
-    |
-    */
-
-    const {
-      data: latestSlip,
-      error: checkError,
-    } = await supabase
+    const { data: latestSlip, error: checkError } = await supabase
       .from("installment_slips")
       .select("id")
       .eq("installment_id", installment.value.id)
       .maybeSingle();
-
-    if (checkError) {
-      throw checkError;
-    }
-
+    if (checkError) throw checkError;
     if (latestSlip?.id) {
       await loadExistingSlip();
-
-      throw new Error(
-        "งวดนี้มีการแนบสลิปเรียบร้อยแล้ว",
-      );
+      throw new Error("งวดนี้มีการแนบสลิปเรียบร้อยแล้ว");
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | UPLOAD STORAGE
-    |--------------------------------------------------------------------------
-    */
+    uploadedPath = buildStoragePath(selectedFile.value);
+    const { error: uploadError } = await supabase.storage
+      .from(SLIP_BUCKET)
+      .upload(uploadedPath, selectedFile.value, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: selectedFile.value.type,
+      });
+    if (uploadError) throw uploadError;
 
-    uploadedPath = buildStoragePath(
-      selectedFile.value,
-    );
-
-    const { error: uploadError } =
-      await supabase.storage
-        .from(SLIP_BUCKET)
-        .upload(
-          uploadedPath,
-          selectedFile.value,
-          {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: selectedFile.value.type,
-          },
-        );
-
-    if (uploadError) {
-      throw uploadError;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | INSERT SLIP
-    |--------------------------------------------------------------------------
-    |
-    | ไม่ต้องส่ง uploaded_by
-    |
-    | Trigger DB:
-    |
-    | trg_set_installment_slip_full_amount
-    |
-    | จะทำ:
-    |
-    | new.uploaded_by = auth.uid()
-    | new.amount = installments.amount
-    |
-    */
-
-    const {
-      data: savedSlip,
-      error: insertError,
-    } = await supabase
+    const { data: savedSlip, error: insertError } = await supabase
       .from("installment_slips")
       .insert({
         installment_id: installment.value.id,
-
-        /*
-         * ส่งยอดเต็มไป
-         *
-         * DB จะบังคับยอดเต็มซ้ำอีกครั้ง
-         */
         amount: paymentAmount.value,
-
         storage_path: uploadedPath,
-
         file_name: selectedFile.value.name,
-
         mime_type: selectedFile.value.type,
-
         file_size: selectedFile.value.size,
-
         note: note.value.trim() || null,
       })
       .select(
-        `
-        id,
-        installment_id,
-        uploaded_by,
-        amount,
-        storage_path,
-        file_name,
-        mime_type,
-        file_size,
-        note,
-        created_at
-      `,
+        "id,installment_id,uploaded_by,amount,storage_path,file_name,mime_type,file_size,note,created_at",
       )
       .single();
 
-    /*
-    |--------------------------------------------------------------------------
-    | INSERT ERROR
-    |--------------------------------------------------------------------------
-    */
-
     if (insertError) {
-      /*
-       * PostgreSQL 23505
-       *
-       * unique violation
-       *
-       * หมายถึงอีกคนแนบสลิปของงวดนี้ไปแล้ว
-       */
       if (insertError.code === "23505") {
         await removeStorageFile(uploadedPath);
-
         uploadedPath = "";
-
         await loadExistingSlip();
-
-        throw new Error(
-          "งวดนี้มีการแนบสลิปเรียบร้อยแล้ว ไม่สามารถแนบซ้ำได้",
-        );
+        throw new Error("งวดนี้มีการแนบสลิปเรียบร้อยแล้ว ไม่สามารถแนบซ้ำได้");
       }
-
       throw insertError;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | SUCCESS
-    |--------------------------------------------------------------------------
-    */
-
     existingSlip.value = savedSlip;
-
     await createSlipUrl(savedSlip.storage_path);
-
     removeSelectedFile();
-
     note.value = "";
-
-    /*
-     * โหลด contract/installments ใหม่
-     *
-     * เพื่อรับ status = submitted
-     * หลัง DB Trigger ทำงาน
-     */
     await loadContract();
-
     loadInstallment();
-
-    successMessage.value =
-      "แนบสลิปเรียบร้อยแล้ว รอตรวจสอบการชำระ";
+    successMessage.value = "แนบสลิปเรียบร้อยแล้ว รอตรวจสอบการชำระ";
   } catch (error) {
     console.error("Payment.submitPayment:", error);
-
-    /*
-     * ถ้า Upload storage สำเร็จ
-     * แต่ insert DB ไม่สำเร็จ
-     *
-     * ลบไฟล์ทิ้ง ป้องกันไฟล์ orphan
-     */
-    if (
-      uploadedPath &&
-      !existingSlip.value?.id
-    ) {
+    if (uploadedPath && !existingSlip.value?.id)
       await removeStorageFile(uploadedPath);
-    }
-
-    if (error?.code === "23505") {
-      errorMessage.value =
-        "งวดนี้มีการแนบสลิปเรียบร้อยแล้ว ไม่สามารถแนบซ้ำได้";
-
-      await loadExistingSlip();
-    } else {
-      errorMessage.value =
-        error?.message ||
-        "ไม่สามารถแนบสลิปได้";
-    }
+    errorMessage.value =
+      error?.code === "23505"
+        ? "งวดนี้มีการแนบสลิปเรียบร้อยแล้ว ไม่สามารถแนบซ้ำได้"
+        : error?.message || "ไม่สามารถแนบสลิปได้";
+    if (error?.code === "23505") await loadExistingSlip();
   } finally {
     submitting.value = false;
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| BACK
-|--------------------------------------------------------------------------
-*/
-
-const goBack = () => {
-  router.back();
-};
-
-/*
-|--------------------------------------------------------------------------
-| MOUNT
-|--------------------------------------------------------------------------
-*/
+const goBack = () => router.back();
 
 onMounted(loadPage);
 </script>
 
 <template>
   <main class="payment-page">
-    <!-- =====================================================
-         HEADER
-    ====================================================== -->
-
     <header class="page-header">
-      <button
-        type="button"
-        class="back-button"
-        @click="goBack"
-      >
-        ‹
-      </button>
-
+      <button type="button" class="back-button" @click="goBack">‹</button>
       <div>
         <h1>ชำระค่างวด</h1>
-
-        <p>
-          แนบหลักฐานการชำระ
-        </p>
+        <p>แนบหลักฐานการชำระ</p>
       </div>
-
-      <span class="header-icon">
-        🧾
-      </span>
+      <span class="header-icon">🧾</span>
     </header>
 
-    <!-- =====================================================
-         LOADING
-    ====================================================== -->
-
-    <section
-      v-if="loading || contractLoading"
-      class="card state-card"
-    >
+    <section v-if="loading || contractLoading" class="card state-card">
       <div class="loader"></div>
-
-      <p>
-        กำลังโหลดข้อมูล...
-      </p>
+      <p>กำลังโหลดข้อมูล...</p>
     </section>
 
-    <!-- =====================================================
-         LOAD ERROR
-    ====================================================== -->
-
-    <section
-      v-else-if="!installment"
-      class="card error-card"
-    >
-      <div class="error-icon">
-        !
-      </div>
-
-      <h2>
-        ไม่สามารถโหลดข้อมูลได้
-      </h2>
-
-      <p>
-        {{ errorMessage || contractError }}
-      </p>
-
-      <button
-        type="button"
-        class="btn secondary"
-        @click="loadPage"
-      >
+    <section v-else-if="!installment" class="card error-card">
+      <div class="error-icon">!</div>
+      <h2>ไม่สามารถโหลดข้อมูลได้</h2>
+      <p>{{ errorMessage || contractError }}</p>
+      <button type="button" class="btn secondary" @click="loadPage">
         ลองใหม่
       </button>
     </section>
 
-    <!-- =====================================================
-         CONTENT
-    ====================================================== -->
-
     <template v-else>
-      <!-- ===================================================
-           VEHICLE
-      ==================================================== -->
-
-      <section
-        v-if="contract"
-        class="card vehicle-card"
-      >
-        <div class="vehicle-icon">
-          🚙
-        </div>
-
+      <section v-if="contract" class="card vehicle-card">
+        <div class="vehicle-icon">🚙</div>
         <div>
-          <h2>
-            {{ contract.car_name }}
-          </h2>
-
-          <p>
-            สัญญา {{ contract.contract_no }}
-          </p>
+          <h2>{{ contract.car_name }}</h2>
+          <p>สัญญา {{ contract.contract_no }}</p>
         </div>
       </section>
-
-      <!-- ===================================================
-           INSTALLMENT
-      ==================================================== -->
 
       <section class="card installment-card">
         <div class="installment-main">
           <div class="installment-box">
-            <small>
-              งวดที่
-            </small>
-
-            <strong>
-              {{ installment.installment_no }}
-            </strong>
+            <small>งวดที่</small
+            ><strong>{{ installment.installment_no }}</strong>
           </div>
-
           <div class="amount-info">
-            <span>
-              ยอดที่ต้องชำระ
-            </span>
-
-            <!-- ยอดเต็ม -->
-            <h2>
-              {{ money(installment.amount) }} บาท
-            </h2>
-
-            <p>
-              กำหนด
-              {{ installment.due_date || "-" }}
-            </p>
+            <span>ยอดที่ต้องชำระ</span>
+            <h2>{{ money(installment.amount) }} บาท</h2>
+            <p>กำหนด {{ installment.due_date || "-" }}</p>
           </div>
         </div>
-
         <div class="status-row">
-          <span>
-            สถานะ
-          </span>
-
-          <strong
-            :class="[
-              'status',
-              installment.status,
-            ]"
-          >
-            {{ statusText }}
-          </strong>
+          <span>สถานะ</span
+          ><strong :class="['status', installment.status]">{{
+            statusText
+          }}</strong>
         </div>
       </section>
 
-      <!-- ===================================================
-           SUCCESS
-      ==================================================== -->
-
-      <div
-        v-if="successMessage"
-        class="message success-message"
-      >
-        <span>
-          ✓
-        </span>
-
-        <div>
-          {{ successMessage }}
-        </div>
+      <div v-if="successMessage" class="message success-message">
+        <span>✓</span>
+        <div>{{ successMessage }}</div>
+      </div>
+      <div v-if="errorMessage && installment" class="message error-message">
+        <span>!</span>
+        <div>{{ errorMessage }}</div>
       </div>
 
-      <!-- ===================================================
-           ERROR
-      ==================================================== -->
-
-      <div
-        v-if="errorMessage && installment"
-        class="message error-message"
-      >
-        <span>
-          !
-        </span>
-
-        <div>
-          {{ errorMessage }}
-        </div>
-      </div>
-
-      <!-- ===================================================
-           EXISTING SLIP
-      ==================================================== -->
-
-      <section
-        v-if="hasSlip"
-        class="card slip-card"
-      >
+      <section v-if="hasSlip" class="card slip-card">
         <div class="slip-header">
-          <div class="success-circle">
-            ✓
-          </div>
-
+          <div class="success-circle">✓</div>
           <div>
-            <h2>
-              แนบสลิปแล้ว
-            </h2>
-
-            <p>
-              มีการบันทึกหลักฐานของงวดนี้แล้ว
-            </p>
+            <h2>แนบสลิปแล้ว</h2>
+            <p>มีการบันทึกหลักฐานของงวดนี้แล้ว</p>
           </div>
         </div>
-
-        <!-- IMAGE -->
 
         <a
           v-if="existingSlipUrl"
@@ -880,155 +380,62 @@ onMounted(loadPage);
           class="slip-preview"
         >
           <img
-            v-if="
-              existingSlip?.mime_type?.startsWith(
-                'image/',
-              )
-            "
+            v-if="existingSlip?.mime_type?.startsWith('image/')"
             :src="existingSlipUrl"
             alt="หลักฐานการชำระ"
           />
-
-          <div
-            v-else
-            class="file-view"
-          >
-            📄
-
-            <strong>
-              {{ existingSlip?.file_name }}
-            </strong>
+          <div v-else class="file-view">
+            📄<strong>{{ existingSlip?.file_name }}</strong>
           </div>
         </a>
 
-        <!-- INFO -->
-
         <div class="slip-info">
           <div>
-            <span>
-              ยอดชำระ
-            </span>
-
-            <strong>
-              {{ money(existingSlip.amount) }}
-              บาท
-            </strong>
+            <span>ยอดชำระ</span
+            ><strong>{{ money(existingSlip.amount) }} บาท</strong>
           </div>
-
           <div>
-            <span>
-              วันที่แนบ
-            </span>
-
-            <strong>
-              {{
-                formatDateTime(
-                  existingSlip.created_at,
-                )
-              }}
-            </strong>
+            <span>วันที่แนบ</span
+            ><strong>{{ formatDateTime(existingSlip.created_at) }}</strong>
           </div>
-
           <div>
-            <span>
-              ไฟล์
-            </span>
-
-            <strong>
-              {{ existingSlip.file_name }}
-            </strong>
+            <span>ไฟล์</span><strong>{{ existingSlip.file_name }}</strong>
           </div>
-
           <div>
-            <span>
-              ขนาด
-            </span>
-
-            <strong>
-              {{
-                formatFileSize(
-                  existingSlip.file_size,
-                )
-              }}
-            </strong>
+            <span>ขนาด</span
+            ><strong>{{ formatFileSize(existingSlip.file_size) }}</strong>
           </div>
         </div>
 
-        <!-- NOTE -->
-
-        <div
-          v-if="existingSlip.note"
-          class="existing-note"
-        >
-          <span>
-            หมายเหตุ
-          </span>
-
-          <p>
-            {{ existingSlip.note }}
-          </p>
+        <div v-if="existingSlip.note" class="existing-note">
+          <span>หมายเหตุ</span>
+          <p>{{ existingSlip.note }}</p>
         </div>
-
-        <!-- OPEN IMAGE -->
-
         <a
           v-if="existingSlipUrl"
           :href="existingSlipUrl"
           target="_blank"
           rel="noopener noreferrer"
           class="btn secondary"
+          >ดูสลิปขนาดเต็ม</a
         >
-          ดูสลิปขนาดเต็ม
-        </a>
-
-        <!-- OWNER INFO -->
-
         <div
-          v-if="
-            isOwner &&
-            installment.status ===
-              'submitted'
-          "
+          v-if="isOwner && installment.status === 'submitted'"
           class="owner-box"
         >
-          <strong>
-            👤 ผู้ผ่อนคนที่ 2
-          </strong>
-
-          <p>
-            คุณสามารถตรวจสอบสลิปนี้ได้
-          </p>
+          <strong>👤 ผู้ผ่อนคนที่ 2</strong>
+          <p>คุณสามารถตรวจสอบสลิปนี้ได้</p>
         </div>
       </section>
 
-      <!-- ===================================================
-           UPLOAD
-      ==================================================== -->
-
-      <section
-        v-else
-        class="card upload-card"
-      >
+      <section v-else class="card upload-card">
         <div class="upload-title">
           <div>
-            <h2>
-              แนบหลักฐานการชำระ
-            </h2>
-
-            <p>
-              ผู้ผ่อนคนที่ 1 หรือคนที่ 2
-              ใครแนบก็ได้
-            </p>
+            <h2>แนบหลักฐานการชำระ</h2>
+            <p>ผู้ผ่อนคนที่ 1 หรือคนที่ 2 ใครแนบก็ได้</p>
           </div>
-
-          <span>
-            📎
-          </span>
+          <span>📎</span>
         </div>
-
-        <!-- =================================================
-             FILE
-        ================================================== -->
 
         <label class="upload-area">
           <input
@@ -1038,22 +445,11 @@ onMounted(loadPage);
             :disabled="submitting"
             @change="handleFileChange"
           />
-
           <template v-if="!previewUrl">
-            <div class="upload-plus">
-              ＋
-            </div>
-
-            <strong>
-              เลือกภาพสลิป
-            </strong>
-
-            <small>
-              JPG, PNG หรือ WEBP
-              สูงสุด 10 MB
-            </small>
+            <div class="upload-plus">＋</div>
+            <strong>เลือกภาพสลิป</strong
+            ><small>JPG, PNG หรือ WEBP สูงสุด 10 MB</small>
           </template>
-
           <img
             v-else
             :src="previewUrl"
@@ -1062,32 +458,12 @@ onMounted(loadPage);
           />
         </label>
 
-        <!-- =================================================
-             SELECTED FILE
-        ================================================== -->
-
-        <div
-          v-if="selectedFile"
-          class="selected-file"
-        >
-          <div class="file-icon">
-            🖼️
-          </div>
-
+        <div v-if="selectedFile" class="selected-file">
+          <div class="file-icon">🖼️</div>
           <div class="file-detail">
-            <strong>
-              {{ selectedFile.name }}
-            </strong>
-
-            <small>
-              {{
-                formatFileSize(
-                  selectedFile.size,
-                )
-              }}
-            </small>
+            <strong>{{ selectedFile.name }}</strong
+            ><small>{{ formatFileSize(selectedFile.size) }}</small>
           </div>
-
           <button
             type="button"
             class="remove-file"
@@ -1098,19 +474,8 @@ onMounted(loadPage);
           </button>
         </div>
 
-        <!-- =================================================
-             NOTE
-        ================================================== -->
-
         <div class="form-group">
-          <label>
-            หมายเหตุ
-
-            <small>
-              (ไม่บังคับ)
-            </small>
-          </label>
-
+          <label>หมายเหตุ <small>(ไม่บังคับ)</small></label>
           <textarea
             v-model="note"
             maxlength="500"
@@ -1118,76 +483,34 @@ onMounted(loadPage);
             :disabled="submitting"
             placeholder="ระบุหมายเหตุเพิ่มเติม"
           ></textarea>
-
-          <div class="count">
-            {{ note.length }} / 500
-          </div>
+          <div class="count">{{ note.length }} / 500</div>
         </div>
-
-        <!-- =================================================
-             AMOUNT
-        ================================================== -->
 
         <div class="confirm-amount">
-          <span>
-            ยอดที่บันทึก
-          </span>
-
-          <strong>
-            {{ money(paymentAmount) }} บาท
-          </strong>
+          <span>ยอดที่บันทึก</span
+          ><strong>{{ money(paymentAmount) }} บาท</strong>
         </div>
-
-        <!-- =================================================
-             SUBMIT
-        ================================================== -->
-
         <button
           type="button"
           class="btn primary"
           :disabled="!canSubmit"
           @click="submitPayment"
         >
-          <template v-if="submitting">
-            <span class="small-loader"></span>
-
-            กำลังบันทึก...
-          </template>
-
-          <template v-else>
-            แนบสลิป
-            {{ money(paymentAmount) }}
-            บาท
-          </template>
+          <template v-if="submitting"
+            ><span class="small-loader"></span>กำลังบันทึก...</template
+          >
+          <template v-else>แนบสลิป {{ money(paymentAmount) }} บาท</template>
         </button>
-
-        <p class="warning-text">
-          1 งวดสามารถแนบสลิปได้เพียง
-          1 ครั้ง
-        </p>
+        <p class="warning-text">1 งวดสามารถแนบสลิปได้เพียง 1 ครั้ง</p>
       </section>
 
-      <!-- ===================================================
-           MEMBER INFO
-      ==================================================== -->
-
       <section class="payment-note-card">
-        <span>
-          {{ memberNo === 1 ? "👤" : "👤" }}
-        </span>
-
+        <span>👤</span>
         <div>
-          <strong>
-            {{
-              memberNo === 1
-                ? "ผู้ผ่อนคนที่ 1"
-                : "ผู้ผ่อนคนที่ 2"
-            }}
-          </strong>
-
-          <small>
-            ยอดที่แสดงเป็นยอดเต็มของงวด
-          </small>
+          <strong>{{
+            memberNo === 1 ? "ผู้ผ่อนคนที่ 1" : "ผู้ผ่อนคนที่ 2"
+          }}</strong
+          ><small>ยอดที่แสดงเป็นยอดเต็มของงวด</small>
         </div>
       </section>
 
@@ -1202,1001 +525,585 @@ onMounted(loadPage);
   box-sizing: border-box;
   padding: 18px 16px 110px;
   color: #123469;
-
-  background:
-    linear-gradient(
-      180deg,
-      #3498eb 0,
-      #52c4ec 230px,
-      #dff7ff 610px,
-      #f4fcff 100%
-    );
+  background: linear-gradient(
+    180deg,
+    #3498eb 0,
+    #52c4ec 230px,
+    #dff7ff 610px,
+    #f4fcff 100%
+  );
 }
-
-/* ---------------------------------------------------------
-   HEADER
---------------------------------------------------------- */
-
 .page-header {
   display: grid;
   grid-template-columns: 42px 1fr 42px;
   align-items: center;
   gap: 8px;
-
   margin-bottom: 14px;
-
-  color: #ffffff;
+  color: #fff;
 }
-
 .page-header h1 {
   margin: 0;
-
-  color: #ffffff;
-
+  color: #fff;
   font-size: 22px;
   font-weight: 800;
 }
-
 .page-header p {
   margin: 2px 0 0;
-
   color: rgba(255, 255, 255, 0.9);
-
   font-size: 12px;
 }
-
 .back-button {
   display: flex;
-
   width: 38px;
   height: 38px;
-
   padding: 0;
-
   align-items: center;
   justify-content: center;
-
-  border: none;
+  border: 0;
   border-radius: 12px;
-
-  color: #ffffff;
-
-  background:
-    rgba(255, 255, 255, 0.2);
-
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
   font-family: inherit;
   font-size: 31px;
-
   cursor: pointer;
 }
-
 .header-icon {
   text-align: center;
-
   font-size: 22px;
 }
-
-/* ---------------------------------------------------------
-   CARD
---------------------------------------------------------- */
-
 .card {
   margin-bottom: 12px;
-
   padding: 18px;
-
   border-radius: 22px;
-
-  background: #ffffff;
-
-  box-shadow:
-    0 7px 22px
-    rgba(21, 81, 123, 0.07);
+  background: #fff;
+  box-shadow: 0 7px 22px rgba(21, 81, 123, 0.07);
 }
-
-/* ---------------------------------------------------------
-   VEHICLE
---------------------------------------------------------- */
-
 .vehicle-card {
   display: flex;
-
   align-items: center;
-
   gap: 13px;
 }
-
 .vehicle-icon {
   font-size: 42px;
 }
-
 .vehicle-card h2 {
   margin: 0;
-
   color: #123469;
-
   font-size: 19px;
   font-weight: 800;
 }
-
 .vehicle-card p {
   margin: 3px 0 0;
-
   color: #607891;
-
   font-size: 12px;
 }
-
-/* ---------------------------------------------------------
-   INSTALLMENT
---------------------------------------------------------- */
-
 .installment-main {
   display: flex;
-
   align-items: center;
-
   gap: 17px;
 }
-
 .installment-box {
   display: flex;
-
   width: 85px;
   height: 82px;
-
   flex: 0 0 85px;
-
   flex-direction: column;
-
   align-items: center;
   justify-content: center;
-
   border-radius: 17px;
-
-  color: #ffffff;
-
-  background:
-    linear-gradient(
-      135deg,
-      #297ff0,
-      #46bdf3
-    );
+  color: #fff;
+  background: linear-gradient(135deg, #297ff0, #46bdf3);
 }
-
 .installment-box small {
   font-size: 12px;
   font-weight: 700;
 }
-
 .installment-box strong {
   margin-top: 2px;
-
   font-size: 36px;
   font-weight: 800;
-
   line-height: 1;
 }
-
 .amount-info {
   min-width: 0;
-
   flex: 1;
 }
-
 .amount-info span {
   color: #496987;
-
   font-size: 13px;
   font-weight: 600;
 }
-
 .amount-info h2 {
   margin: 6px 0;
-
   color: #123469;
-
   font-size: 25px;
   font-weight: 800;
 }
-
 .amount-info p {
   margin: 0;
-
   color: #667f98;
-
   font-size: 12px;
 }
-
 .status-row {
   display: flex;
-
   align-items: center;
   justify-content: space-between;
-
   margin-top: 15px;
   padding-top: 12px;
-
-  border-top:
-    1px solid #e5edf3;
+  border-top: 1px solid #e5edf3;
 }
-
 .status-row > span {
   color: #607891;
-
   font-size: 12px;
 }
-
 .status {
   padding: 5px 10px;
-
   border-radius: 9px;
-
   font-size: 11px;
 }
-
 .status.pending,
 .status.partial {
   color: #cf7a09;
-
   background: #fff1d3;
 }
-
 .status.submitted {
   color: #1779c6;
-
   background: #e8f4ff;
 }
-
 .status.paid {
   color: #278d58;
-
   background: #e4f8eb;
 }
-
 .status.rejected {
   color: #d04747;
-
   background: #ffebeb;
 }
-
-/* ---------------------------------------------------------
-   MESSAGES
---------------------------------------------------------- */
-
 .message {
   display: flex;
-
   align-items: center;
-
   gap: 9px;
-
   margin-bottom: 12px;
-
   padding: 11px 13px;
-
   border-radius: 13px;
-
   font-size: 12px;
   line-height: 1.5;
 }
-
 .message > span {
   display: flex;
-
   width: 25px;
   height: 25px;
-
   flex: 0 0 25px;
-
   align-items: center;
   justify-content: center;
-
   border-radius: 50%;
-
-  color: #ffffff;
-
+  color: #fff;
   font-weight: 800;
 }
-
 .success-message {
   color: #176f45;
-
   background: #e7f8ef;
 }
-
 .success-message > span {
   background: #28ae67;
 }
-
 .error-message {
   color: #a53d3d;
-
   background: #ffeded;
 }
-
 .error-message > span {
   background: #df5555;
 }
-
-/* ---------------------------------------------------------
-   UPLOAD HEADER
---------------------------------------------------------- */
-
 .upload-title {
   display: flex;
-
   align-items: flex-start;
   justify-content: space-between;
-
   margin-bottom: 13px;
 }
-
 .upload-title h2 {
   margin: 0;
-
   color: #123469;
-
   font-size: 17px;
   font-weight: 800;
 }
-
 .upload-title p {
   margin: 4px 0 0;
-
   color: #71879c;
-
   font-size: 11px;
 }
-
 .upload-title > span {
   font-size: 23px;
 }
-
-/* ---------------------------------------------------------
-   UPLOAD AREA
---------------------------------------------------------- */
-
 .upload-area {
   display: flex;
-
   min-height: 190px;
-
   box-sizing: border-box;
-
   overflow: hidden;
-
   flex-direction: column;
-
   align-items: center;
   justify-content: center;
-
-  border:
-    2px dashed #9ccdf2;
-
+  border: 2px dashed #9ccdf2;
   border-radius: 17px;
-
   color: #307bbe;
-
   background: #f3faff;
-
   text-align: center;
-
   cursor: pointer;
 }
-
 .upload-area input {
   position: absolute;
-
   width: 1px;
   height: 1px;
-
   opacity: 0;
 }
-
 .upload-plus {
   display: flex;
-
   width: 48px;
   height: 48px;
-
   margin-bottom: 8px;
-
   align-items: center;
   justify-content: center;
-
   border-radius: 50%;
-
-  color: #ffffff;
-
-  background:
-    linear-gradient(
-      135deg,
-      #2d83ec,
-      #43b8ed
-    );
-
+  color: #fff;
+  background: linear-gradient(135deg, #2d83ec, #43b8ed);
   font-size: 28px;
 }
-
 .upload-area strong {
   font-size: 14px;
 }
-
 .upload-area small {
   margin-top: 5px;
-
   color: #8295a7;
-
   font-size: 10px;
 }
-
 .preview-image {
   display: block;
-
   width: 100%;
   max-height: 380px;
-
   object-fit: contain;
-
   background: #edf5f8;
 }
-
-/* ---------------------------------------------------------
-   FILE
---------------------------------------------------------- */
-
 .selected-file {
   display: flex;
-
   align-items: center;
-
   gap: 10px;
-
   margin-top: 10px;
   padding: 10px;
-
   border-radius: 13px;
-
   background: #eef7ff;
 }
-
 .file-icon {
   font-size: 21px;
 }
-
 .file-detail {
   min-width: 0;
-
   flex: 1;
 }
-
 .file-detail strong {
   display: block;
-
   overflow: hidden;
-
   color: #254d74;
-
   font-size: 12px;
-
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .file-detail small {
   display: block;
-
   margin-top: 2px;
-
   color: #8194a5;
-
   font-size: 10px;
 }
-
 .remove-file {
   display: flex;
-
   width: 30px;
   height: 30px;
-
   padding: 0;
-
   align-items: center;
   justify-content: center;
-
-  border: none;
+  border: 0;
   border-radius: 50%;
-
   color: #cf4b4b;
-
   background: #ffe4e4;
-
   font-size: 20px;
-
   cursor: pointer;
 }
-
-/* ---------------------------------------------------------
-   FORM
---------------------------------------------------------- */
-
 .form-group {
   margin-top: 15px;
 }
-
 .form-group label {
   display: block;
-
   margin-bottom: 6px;
-
   color: #315374;
-
   font-size: 12px;
   font-weight: 700;
 }
-
 .form-group label small {
   color: #8497a9;
-
   font-weight: 500;
 }
-
 .form-group textarea {
   width: 100%;
   min-height: 88px;
-
   box-sizing: border-box;
-
   padding: 11px;
-
   resize: vertical;
-
-  border:
-    1px solid #d4e1eb;
-
+  border: 1px solid #d4e1eb;
   border-radius: 12px;
-
   outline: none;
-
   color: #173a62;
-
-  background: #ffffff;
-
+  background: #fff;
   font-family: inherit;
   font-size: 13px;
 }
-
 .form-group textarea:focus {
   border-color: #3995e7;
-
-  box-shadow:
-    0 0 0 3px
-    rgba(57, 149, 231, 0.1);
+  box-shadow: 0 0 0 3px rgba(57, 149, 231, 0.1);
 }
-
 .count {
   margin-top: 3px;
-
   color: #8295a7;
-
   text-align: right;
-
   font-size: 9px;
 }
-
-/* ---------------------------------------------------------
-   AMOUNT
---------------------------------------------------------- */
-
 .confirm-amount {
   display: flex;
-
   align-items: center;
   justify-content: space-between;
-
   margin: 14px 0 11px;
   padding: 12px;
-
   border-radius: 12px;
-
   background: #fff4df;
 }
-
 .confirm-amount span {
   color: #81602e;
-
   font-size: 11px;
 }
-
 .confirm-amount strong {
   color: #d67609;
-
   font-size: 17px;
   font-weight: 800;
 }
-
-/* ---------------------------------------------------------
-   BUTTON
---------------------------------------------------------- */
-
 .btn {
   display: flex;
-
   width: 100%;
   min-height: 46px;
-
   box-sizing: border-box;
-
   align-items: center;
   justify-content: center;
-
   gap: 7px;
-
-  border: none;
+  border: 0;
   border-radius: 13px;
-
   font-family: inherit;
   font-size: 14px;
   font-weight: 800;
-
   text-decoration: none;
-
   cursor: pointer;
 }
-
 .btn.primary {
-  color: #ffffff;
-
-  background:
-    linear-gradient(
-      90deg,
-      #ff9915,
-      #ff6f0f
-    );
+  color: #fff;
+  background: linear-gradient(90deg, #ff9915, #ff6f0f);
 }
-
 .btn.secondary {
   color: #267dcf;
-
   background: #eaf5ff;
 }
-
 .btn:disabled {
   opacity: 0.55;
-
   cursor: not-allowed;
 }
-
 .warning-text {
   margin: 9px 0 0;
-
   color: #8596a6;
-
   text-align: center;
-
   font-size: 9px;
 }
-
-/* ---------------------------------------------------------
-   EXISTING SLIP
---------------------------------------------------------- */
-
 .slip-header {
   display: flex;
-
   align-items: center;
-
   gap: 10px;
-
   margin-bottom: 14px;
 }
-
 .success-circle {
   display: flex;
-
   width: 42px;
   height: 42px;
-
   flex: 0 0 42px;
-
   align-items: center;
   justify-content: center;
-
   border-radius: 50%;
-
-  color: #ffffff;
-
+  color: #fff;
   background: #28b468;
-
   font-size: 20px;
   font-weight: 800;
 }
-
 .slip-header h2 {
   margin: 0;
-
   color: #197247;
-
   font-size: 17px;
 }
-
 .slip-header p {
   margin: 2px 0 0;
-
   color: #71879b;
-
   font-size: 11px;
 }
-
 .slip-preview {
   display: block;
-
   overflow: hidden;
-
   margin-bottom: 13px;
-
   border-radius: 14px;
-
   background: #edf5f8;
 }
-
 .slip-preview img {
   display: block;
-
   width: 100%;
   max-height: 420px;
-
   object-fit: contain;
 }
-
 .file-view {
   display: flex;
-
   min-height: 160px;
-
   flex-direction: column;
-
   align-items: center;
   justify-content: center;
-
   gap: 8px;
-
   color: #56718b;
-
   font-size: 35px;
 }
-
 .file-view strong {
   font-size: 12px;
 }
-
 .slip-info > div {
   display: flex;
-
   align-items: flex-start;
   justify-content: space-between;
-
   gap: 12px;
-
   padding: 8px 0;
-
-  border-bottom:
-    1px solid #e8eef3;
+  border-bottom: 1px solid #e8eef3;
 }
-
 .slip-info span {
   color: #71879b;
-
   font-size: 11px;
 }
-
 .slip-info strong {
   max-width: 65%;
-
   color: #294e74;
-
   text-align: right;
-
   overflow-wrap: anywhere;
-
   font-size: 11px;
 }
-
 .existing-note {
   margin: 11px 0;
-
   padding: 10px;
-
   border-radius: 11px;
-
   background: #f4f8fa;
 }
-
 .existing-note span {
   color: #71879b;
-
   font-size: 10px;
 }
-
 .existing-note p {
   margin: 3px 0 0;
-
   color: #315374;
-
   font-size: 12px;
 }
-
 .owner-box {
   margin-top: 11px;
-
   padding: 11px;
-
   border-radius: 12px;
-
   color: #35648c;
-
   background: #eef7ff;
 }
-
 .owner-box strong {
   font-size: 12px;
 }
-
 .owner-box p {
   margin: 3px 0 0;
-
   font-size: 10px;
 }
-
-/* ---------------------------------------------------------
-   MEMBER
---------------------------------------------------------- */
-
 .payment-note-card {
   display: flex;
-
   align-items: center;
-
   gap: 9px;
-
   margin-bottom: 12px;
   padding: 11px 14px;
-
   border-radius: 14px;
-
   color: #315776;
-
-  background:
-    rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.75);
 }
-
 .payment-note-card > span {
   font-size: 20px;
 }
-
 .payment-note-card strong {
   display: block;
-
   font-size: 11px;
 }
-
 .payment-note-card small {
   display: block;
-
   margin-top: 2px;
-
   color: #72889b;
-
   font-size: 9px;
 }
-
-/* ---------------------------------------------------------
-   LOADING / ERROR
---------------------------------------------------------- */
-
 .state-card,
 .error-card {
   margin-top: 25px;
-
   text-align: center;
 }
-
 .state-card p,
 .error-card p {
   color: #6f8598;
-
   font-size: 12px;
 }
-
 .error-card h2 {
   font-size: 17px;
 }
-
 .loader {
   width: 34px;
   height: 34px;
-
   margin: auto;
-
-  border:
-    4px solid #dbeaf5;
-
+  border: 4px solid #dbeaf5;
   border-top-color: #328ee5;
-
   border-radius: 50%;
-
-  animation:
-    spin 0.8s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
-
 .small-loader {
   width: 17px;
   height: 17px;
-
-  border:
-    2px solid
-    rgba(255, 255, 255, 0.45);
-
-  border-top-color: #ffffff;
-
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
   border-radius: 50%;
-
-  animation:
-    spin 0.8s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
-
 .error-icon {
   display: flex;
-
   width: 48px;
   height: 48px;
-
   margin: auto;
-
   align-items: center;
   justify-content: center;
-
   border-radius: 50%;
-
-  color: #ffffff;
-
+  color: #fff;
   background: #dd5454;
-
   font-size: 22px;
   font-weight: 800;
 }
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
-
-/* ---------------------------------------------------------
-   MOBILE
---------------------------------------------------------- */
-
 @media (max-width: 380px) {
   .payment-page {
     padding-right: 12px;
     padding-left: 12px;
   }
-
   .card {
     padding: 15px;
   }
-
   .installment-main {
     gap: 12px;
   }
-
   .installment-box {
     width: 76px;
-
     flex-basis: 76px;
   }
-
   .amount-info h2 {
     font-size: 21px;
   }
