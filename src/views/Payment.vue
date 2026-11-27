@@ -29,7 +29,7 @@ const {
 | ให้เปลี่ยนเฉพาะบรรทัดนี้
 |
 */
-const SLIP_BUCKET = "installment-slips";
+const SLIP_BUCKET = "payment-slips";
 
 /*
 |--------------------------------------------------------------------------
