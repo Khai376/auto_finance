@@ -207,6 +207,76 @@ const removeStorageFile = async (path) => {
   if (error) console.error("removeStorageFile:", error);
 };
 
+const approvePayment = async () => {
+  if (
+    !isOwner.value ||
+    !existingSlip.value?.id ||
+    installment.value?.status !== "submitted"
+  )
+    return;
+
+  submitting.value = true;
+  clearMessages();
+
+  try {
+    const { error } = await supabase
+      .from("installments")
+      .update({
+        status: "paid",
+        verified_at: new Date().toISOString(),
+        owner_note: "อนุมัติการชำระโดยผู้ผ่อนคนที่ 2",
+      })
+      .eq("id", installment.value.id)
+      .eq("status", "submitted");
+
+    if (error) throw error;
+
+    await loadContract();
+    loadInstallment();
+    successMessage.value = "อนุมัติการชำระเรียบร้อยแล้ว";
+  } catch (error) {
+    console.error("Payment.approvePayment:", error);
+    errorMessage.value = error?.message || "ไม่สามารถอนุมัติการชำระได้";
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const rejectPayment = async () => {
+  if (
+    !isOwner.value ||
+    !existingSlip.value?.id ||
+    installment.value?.status !== "submitted"
+  )
+    return;
+
+  submitting.value = true;
+  clearMessages();
+
+  try {
+    const { error } = await supabase
+      .from("installments")
+      .update({
+        status: "rejected",
+        verified_at: new Date().toISOString(),
+        owner_note: "ไม่อนุมัติหลักฐานการชำระโดยผู้ผ่อนคนที่ 2",
+      })
+      .eq("id", installment.value.id)
+      .eq("status", "submitted");
+
+    if (error) throw error;
+
+    await loadContract();
+    loadInstallment();
+    successMessage.value = "บันทึกผลไม่อนุมัติเรียบร้อยแล้ว";
+  } catch (error) {
+    console.error("Payment.rejectPayment:", error);
+    errorMessage.value = error?.message || "ไม่สามารถบันทึกผลการตรวจสอบได้";
+  } finally {
+    submitting.value = false;
+  }
+};
+
 const submitPayment = async () => {
   if (submitting.value) return;
   clearMessages();
@@ -423,8 +493,27 @@ onMounted(loadPage);
           v-if="isOwner && installment.status === 'submitted'"
           class="owner-box"
         >
-          <strong>👤 ผู้ผ่อนคนที่ 2</strong>
-          <p>คุณสามารถตรวจสอบสลิปนี้ได้</p>
+          <strong>ตรวจสอบการชำระ</strong>
+          <p>กรุณาตรวจสอบสลิปก่อนอนุมัติ หรือเลือกไม่อนุมัติเพื่อให้แนบใหม่</p>
+          <button
+            type="button"
+            class="btn approve"
+            :disabled="submitting"
+            @click="approvePayment"
+          >
+            <template v-if="submitting"
+              ><span class="small-loader"></span>กำลังบันทึก...</template
+            >
+            <template v-else>✓ อนุมัติการชำระ</template>
+          </button>
+          <button
+            type="button"
+            class="btn reject"
+            :disabled="submitting"
+            @click="rejectPayment"
+          >
+            ✕ ไม่อนุมัติ
+          </button>
         </div>
       </section>
 
@@ -904,6 +993,17 @@ onMounted(loadPage);
 .btn.secondary {
   color: #267dcf;
   background: #eaf5ff;
+}
+.btn.approve {
+  margin-top: 12px;
+  color: #fff;
+  background: #22a866;
+}
+.btn.reject {
+  margin-top: 8px;
+  color: #d94b4b;
+  border: 1px solid #efaaaa;
+  background: #fff1f1;
 }
 .btn:disabled {
   opacity: 0.55;
